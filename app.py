@@ -1,25 +1,67 @@
 import streamlit as st
-import pandas as pd
 import hashlib
+import sqlite3
 
 # セッション状態の初期化
 if 'page' not in st.session_state:
     st.session_state.page = 'home'
 
-# ユーザーデータの読み込み（または作成）
-try:
-    users_df = pd.read_csv('users.csv')
-except FileNotFoundError:
-    users_df = pd.DataFrame(columns=['username', 'password'])
+# データベースの接続と操作
+def get_db_connection():
+    conn = sqlite3.connect('users.db')
+    return conn
 
-def save_users():
-    users_df.to_csv('users.csv', index=False)
+def create_db():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            username TEXT PRIMARY KEY,
+            password TEXT NOT NULL
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def save_user(username: str, password: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('INSERT INTO users (username, password) VALUES (?, ?)', (username, password))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        return False  # ユーザー名が既に存在する場合
+    finally:
+        conn.close()
+    return True
+
+def get_user(username: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM users WHERE username = ?', (username,))
+    user = cursor.fetchone()
+    conn.close()
+    return user
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 def home():
-    st.title('voice_changerへようこそ！')
+        # タイトルをカスタムサイズで表示し、中央に配置
+    st.markdown(
+        '''
+        <style>
+        .title {
+            text-align: center;
+            font-size: 5em;
+            white-space: nowrap; /* テキストの改行を防ぐ */
+            margin: 3;
+        }
+        </style>
+        <div class="title">voice_changerへようこそ！</div>
+        ''',
+        unsafe_allow_html=True
+    )
 
     # ボタンの配置
     col1, col2, col3 = st.columns([1, 1, 1])
@@ -32,9 +74,11 @@ def home():
             st.session_state.page = 'create_account'
     
     with col3:
-        
         if st.button('ログイン', key='login'):
             st.session_state.page = 'login'
+
+    # voice_changerの概要説明コメント
+    st.write("voice_changerではあなたの声、もしくは音声ファイルを別人の声に変換できます。")
 
 def create_account():
     st.title('アカウント作成')
@@ -46,13 +90,14 @@ def create_account():
     with col1:
         if st.button('アカウント作成', key='create'):
             if username and password:
-                if username in users_df['username'].values:
+                if get_user(username):
                     st.error('このユーザー名は既に使用されています。')
                 else:
-                    users_df.loc[len(users_df)] = [username, hash_password(password)]
-                    save_users()
-                    st.success('アカウントが作成されました。')
-                    st.session_state.page = 'home'
+                    if save_user(username, hash_password(password)):
+                        st.success('アカウントが作成されました。')
+                        st.session_state.page = 'home'
+                    else:
+                        st.error('アカウントの作成に失敗しました。')
             else:
                 st.error('ユーザー名とパスワードを入力してください。')
     
@@ -69,8 +114,8 @@ def login():
     
     with col1:
         if st.button('ログイン', key='login_submit'):
-            user = users_df[users_df['username'] == username]
-            if not user.empty and user['password'].values[0] == hash_password(password):
+            user = get_user(username)
+            if user and user[1] == hash_password(password):
                 st.success('ログインに成功しました。')
             else:
                 st.error('ユーザー名またはパスワードが正しくありません。')
@@ -81,6 +126,7 @@ def login():
 
 # メイン関数
 def main():
+    create_db()  # アプリケーション起動時にデータベースを作成
     if st.session_state.page == 'home':
         home()
     elif st.session_state.page == 'create_account':
@@ -90,5 +136,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
