@@ -84,6 +84,7 @@ def process_audio(file_path, api_key, settings):
     }
     try:
         response = requests.post(api_url, files=files, data=data)
+
         print(response)
         if response.status_code == 200:
             return response.content
