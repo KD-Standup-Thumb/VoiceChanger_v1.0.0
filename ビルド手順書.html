@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ビルド手順書 | VoiceChanger</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
+        }
+        .container {
+            width: 80%;
+            margin: 0 auto;
+            overflow: hidden;
+        }
+        header {
+            background: #333;
+            color: #fff;
+            padding-top: 30px;
+            min-height: 70px;
+            border-bottom: #ccc 3px solid;
+            text-align: center;
+        }
+        header h1 {
+            margin: 0;
+        }
+        section {
+            padding: 20px;
+            background: #fff;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+        h2 {
+            color: #333;
+        }
+        code {
+            background: #f4f4f4;
+            padding: 0.2em 0.4em;
+            border-radius: 4px;
+        }
+        pre {
+            background: #f4f4f4;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        ul {
+            list-style: none;
+            padding: 0;
+        }
+        li {
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>ビルド手順書 | VoiceChanger</h1>
+        </div>
+    </header>
+
+    <div class="container">
+        <section>
+            <h2>実行環境</h2>
+            <p>この手順は、Pythonがインストールされていることを前提としています。（Python 3.12.6 推奨）</p>
+        </section>
+
+        <section>
+            <h2>1. VoiceChangerのgitrepositoryをクローン</h2>
+            <p>以下のコマンドを使用して、リポジトリをクローンしてください。</p>
+            <pre><code>git clone https://github.com/KD-Standup-Thumb/VoiceChanger_v1.0.0.git</code></pre>
+        </section>
+
+        <section>
+            <h2>2. Python仮想環境（venv）の構成</h2>
+            <p>仮想環境を構成して、依存関係を管理します。</p>
+            <p>以下のコマンドをターミナルで実行してください。</p>
+            <pre><code>python -m venv --prompt . .venv</code></pre>
+            <pre><code>.venv\Scripts\activate</code></pre>
+            <p>仮想環境をアクティベート後、依存関係をインストールします。</p>
+            <pre><code>pip install -r requirements.txt</code></pre>
+        </section>
+
+        <section>
+            <h2>3. APIサーバーの起動</h2>
+            <p>次に、APIサーバーを起動します。以下の手順で行ってください。</p>
+            <ol>
+                <p>APIサーバーを起動します。</p>
+                <pre><code>python vch_api.py</code></pre>
+            </ol>
+        </section>
+
+        <section>
+            <h2>4. Webサーバーの起動</h2>
+            <p>最後に、Webサーバーを起動します。以下のコマンドをターミナルで実行してください。</p>
+            <pre><code>streamlit run app.py</code></pre>
+        </section>
+
+        <section>
+            <h2>ビルド完了</h2>
+            <p>これでVoiceChangerのビルドが完了です。アプリケーションを利用できます。</p>
+        </section>
+    </div>
+</body>
+</html>

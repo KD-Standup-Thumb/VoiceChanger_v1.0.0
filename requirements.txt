@@ -1,0 +1,12 @@
+streamlit
+sqlalchemy
+pandas
+torch
+torchaudio
+setuptools
+numpy
+flask
+sqlalchemy
+streamlit
+requests
+certbot

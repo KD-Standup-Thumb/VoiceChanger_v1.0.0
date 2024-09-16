@@ -1,246 +1,252 @@
 import streamlit as st
+import pandas as pd
 import hashlib
-import sqlite3
+import json
+import requests
+import logging
+import os
+import uuid
+from datetime import datetime
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship, sessionmaker, scoped_session
 
-# セッション状態の初期化
-if 'page' not in st.session_state:
-    st.session_state.page = 'home'
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
-if 'current_view' not in st.session_state:
-    st.session_state.current_view = 'main'
+# Database setup
+Base = declarative_base()
 
-# データベースの接続と操作
-def get_db_connection():
-    conn = sqlite3.connect('users.db')
-    return conn
+class User(Base):
+    __tablename__ = 'users'
+    id = Column(Integer, primary_key=True)
+    username = Column(String, unique=True, nullable=False)
+    password = Column(String, nullable=False)
+    settings = relationship("UserSetting", back_populates="user")
+    api_key = relationship("APIKey", back_populates="user", uselist=False)
+    conversions = relationship("ConversionHistory", back_populates="user")
 
-def create_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            username TEXT PRIMARY KEY,
-            password TEXT NOT NULL
-        )
-    ''')
-    conn.commit()
-    conn.close()
+class UserSetting(Base):
+    __tablename__ = 'user_settings'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'))
+    setting_name = Column(String, nullable=False)
+    setting_value = Column(String, nullable=False)
+    user = relationship("User", back_populates="settings")
 
-def save_user(username: str, password: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute('INSERT INTO users (username, password) VALUES (?, ?)', (username, password))
-        conn.commit()
-    except sqlite3.IntegrityError:
-        return False  # ユーザー名が既に存在する場合
-    finally:
-        conn.close()
-    return True
+class APIKey(Base):
+    __tablename__ = 'api_keys'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), unique=True)
+    api_key = Column(String, nullable=False)
+    user = relationship("User", back_populates="api_key")
 
-def get_user(username: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM users WHERE username = ?', (username,))
-    user = cursor.fetchone()
-    conn.close()
-    return user
+class ConversionHistory(Base):
+    __tablename__ = 'conversion_history'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'))
+    original_filename = Column(String, nullable=False)
+    converted_filename = Column(String, nullable=False)
+    conversion_date = Column(DateTime, default=datetime.utcnow)
+    user = relationship("User", back_populates="conversions")
 
+engine = create_engine('sqlite:///voice_changer.db', echo=True)
+Session = scoped_session(sessionmaker(bind=engine))
+Base.metadata.create_all(engine)
+
+# Utility functions
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-def home():
-    st.markdown(
-        '''
-        <style>
-        .title {
-            text-align: center;
-            font-size: 5em;
-            white-space: nowrap;
-            margin: 3;
-        }
-        </style>
-        <div class="title">voice_changerへようこそ！</div>
-        ''',
-        unsafe_allow_html=True
-    )
+def generate_api_key():
+    api_url = "http://127.0.0.1:5000/voicechange/api/token/create"
+    try:
+        response = requests.post(api_url, timeout=5)
+        if response.status_code == 200:
+            return response.json().get('access_token')
+    except requests.RequestException as e:
+        st.error(f"API key generation failed: {str(e)}")
+    return None
 
-    col1, col2, col3 = st.columns([1, 1, 1])
-    
-    with col1:
-        st.write("")
-    
-    with col2:
-        if st.button('アカウント作成', key='create_account'):
-            st.session_state.page = 'create_account'
-    
-    with col3:
-        if st.button('ログイン', key='login'):
-            st.session_state.page = 'login'
+def save_setting(user_id, setting_name, setting_value):
+    with Session() as session:
+        setting = session.query(UserSetting).filter_by(user_id=user_id, setting_name=setting_name).first()
+        if setting:
+            setting.setting_value = setting_value
+        else:
+            new_setting = UserSetting(user_id=user_id, setting_name=setting_name, setting_value=setting_value)
+            session.add(new_setting)
+        session.commit()
 
-    st.write("voice_changerではあなたの声、もしくは音声ファイルを別人の声に変換できます。")
+def process_audio(file_path, api_key, settings):
+    api_url = "http://127.0.0.1:5000/voicechange/api/audio/convert"
+    files = {'audio.wav': open(file_path, 'rb')}
+    data = {
+        'access_token': api_key,
+        'settings': json.dumps(settings)
+    }
+    try:
+        response = requests.post(api_url, files=files, data=data)
+        print(response)
+        if response.status_code == 200:
+            return response.content
+        st.error(f"Server error occurred. Status code: {response.status_code}")
+    except Exception as e:
+        st.error(f"An error occurred: {str(e)}")
+    return None
 
-def create_account():
-    st.title('アカウント作成')
-    username = st.text_input('ユーザー名')
-    password = st.text_input('パスワード', type='password')
-    
+def save_conversion_history(user_id, original_filename, converted_filename):
+    with Session() as session:
+        new_conversion = ConversionHistory(
+            user_id=user_id,
+            original_filename=original_filename,
+            converted_filename=converted_filename
+        )
+        session.add(new_conversion)
+        session.commit()
+
+# View functions
+def home_view():
+    st.title("Welcome to Voice Changer!")
     col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button('アカウント作成', key='create'):
-            if username and password:
-                if get_user(username):
-                    st.error('このユーザー名は既に使用されています。')
-                else:
-                    if save_user(username, hash_password(password)):
-                        st.success('アカウントが作成されました。')
-                        st.session_state.page = 'home'
-                    else:
-                        st.error('アカウントの作成に失敗しました。')
-            else:
-                st.error('ユーザー名とパスワードを入力してください。')
-    
-    with col2:
-        if st.button('ホームに戻る', key='back'):
-            st.session_state.page = 'home'
+    if col1.button('Create Account'):
+        st.session_state.page = 'create_account'
+    if col2.button('Login'):
+        st.session_state.page = 'login'
+    st.write("Voice Changer allows you to transform your voice or audio files into different voices.")
 
-def login():
-    st.title('ログイン')
-    username = st.text_input('ユーザー名')
-    password = st.text_input('パスワード', type='password')
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button('ログイン', key='login_submit'):
-            user = get_user(username)
-            if user and user[1] == hash_password(password):
-                st.success('ログインに成功しました。')
-                st.session_state.logged_in = True
-                st.session_state.page = 'main'
-            else:
-                st.error('ユーザー名またはパスワードが正しくありません。')
-    
-    with col2:
-        if st.button('ホームに戻る', key='home'):
-            st.session_state.page = 'home'
+def create_account_view():
+    st.title('Create Account')
+    username = st.text_input('Username')
+    password = st.text_input('Password', type='password')
+    if not st.button('Create Account'):
+        return
 
-# Voice Changer の機能
-def change_pitch():
-    st.write("音高変更機能はここに実装します。")
+    if not (username and password):
+        st.error('Please enter both username and password.')
+        return
 
-def change_timbre():
-    st.write("音色変更機能はここに実装します。")
+    with Session() as session:
+        if session.query(User).filter_by(username=username).first():
+            st.error('Username already exists.')
+            return
 
-def save_config():
-    st.write("設定保存機能はここに実装します。")
+        new_user = User(username=username, password=hash_password(password))
+        session.add(new_user)
+        session.flush()
+        api_key = generate_api_key()
+        if not api_key:
+            session.rollback()
+            st.error('Failed to create account. Could not generate API key.')
+            return
 
-def edit_config():
-    st.write("設定編集機能はここに実装します。")
+        new_api_key = APIKey(user_id=new_user.id, api_key=api_key)
+        session.add(new_api_key)
+        session.commit()
+        st.success('Account created successfully.')
+        st.session_state.page = 'login'
 
-def select_config():
-    st.write("設定選択機能はここに実装します。")
+def login_view():
+    st.title('Login')
+    username = st.text_input('Username')
+    password = st.text_input('Password', type='password')
+    if not st.button('Login'):
+        return
 
-def save_timbre():
-    st.write("音色保存機能はここに実装します。")
-
-def save_pitch():
-    st.write("音高保存機能はここに実装します。")
-
-def save_pitch_interval():
-    st.write("音程保存機能はここに実装します。")
-
-# 履歴関連の機能
-def save_history():
-    st.write("音声変換履歴保存機能はここに実装します。")
-
-def search_history():
-    st.write("音声変換履歴検索機能はここに実装します。")
-
-def delete_history():
-    st.write("音声変換履歴削除機能はここに実装します。")
+    with Session() as session:
+        user = session.query(User).filter_by(username=username).first()
+        if user and user.password == hash_password(password):
+            st.session_state.logged_in = True
+            st.session_state.user_id = user.id
+            st.session_state.page = 'main'
+        else:
+            st.error('Invalid username or password.')
 
 def main_view():
-    st.title('Voice Changer メイン画面')
-    
-    # 機能選択
-    feature = st.selectbox(
-        "機能を選択してください",
-        ("音高変更", "音色変更", "設定保存", "設定編集", "設定選択", "音色保存", "音高保存", "音程保存")
-    )
-    
-    # 選択された機能を表示
-    if feature == "音高変更":
-        change_pitch()
-    elif feature == "音色変更":
-        change_timbre()
-    elif feature == "設定保存":
-        save_config()
-    elif feature == "設定編集":
-        edit_config()
-    elif feature == "設定選択":
-        select_config()
-    elif feature == "音色保存":
-        save_timbre()
-    elif feature == "音高保存":
-        save_pitch()
-    elif feature == "音程保存":
-        save_pitch_interval()
+    st.title('Voice Changer Main')
+    with Session() as session:
+        user = session.query(User).filter_by(id=st.session_state.user_id).first()
+        settings = {s.setting_name: s.setting_value for s in user.settings}
+        api_key = session.query(APIKey).filter_by(user_id=st.session_state.user_id).first()
 
-def history_view():
-    st.title('音声変換履歴')
-    
-    # 履歴機能選択
-    history_feature = st.selectbox(
-        "履歴機能を選択してください",
-        ("履歴保存", "履歴検索", "履歴削除")
-    )
-    
-    # 選択された履歴機能を表示
-    if history_feature == "履歴保存":
-        save_history()
-    elif history_feature == "履歴検索":
-        search_history()
-    elif history_feature == "履歴削除":
-        delete_history()
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Voice Settings")
+        for setting in ['pitch', 'timbre', 'pitch_interval']:
+            value = st.slider(f"{setting.capitalize()} adjustment", 0, 100, int(settings.get(f'{setting}_value', 50)))
+            if st.button(f"Save {setting}"):
+                save_setting(st.session_state.user_id, f'{setting}_value', str(value))
+                st.success(f"{setting.capitalize()} setting saved.")
 
-def main_screen():
-    # サイドバーにメニューを追加
-    st.sidebar.title("メニュー")
-    view = st.sidebar.radio("画面選択", ("メイン画面", "音声変換履歴"))
-    
-    if view == "メイン画面":
-        st.session_state.current_view = 'main'
-    else:
-        st.session_state.current_view = 'history'
-    
-    # 選択されたビューを表示
-    if st.session_state.current_view == 'main':
-        main_view()
-    else:
-        history_view()
-    
-    if st.sidebar.button('ログアウト'):
-        st.session_state.logged_in = False
-        st.session_state.page = 'home'
-        st.experimental_rerun()
+    with col2:
+        st.subheader("File Upload")
+        uploaded_file = st.file_uploader("Upload WAV file", type=["wav"])
+        if not uploaded_file:
+            return
 
-# メイン関数
+        st.audio(uploaded_file, format='audio/wav')
+        if not st.button("Process Audio"):
+            return
+
+        if not api_key:
+            st.error("No valid API key found. Please contact the administrator.")
+            return
+
+        save_dir = "./audio"
+        os.makedirs(save_dir, exist_ok=True)
+        original_filename = uploaded_file.name
+        file_path = os.path.join(save_dir, f"{uuid.uuid4()}.wav")
+        with open(file_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+
+        processed_audio = process_audio(file_path, api_key.api_key, settings)
+        if processed_audio:
+            st.success("Audio conversion completed!")
+            st.audio(processed_audio, format='audio/wav')
+            
+            # 変換後のファイル名を生成
+            unique_filename = f"{uuid.uuid4()}_converted_{original_filename}"
+            converted_file_path = os.path.join(save_dir, unique_filename)
+            
+            # 変換された音声ファイルを保存
+            with open(converted_file_path, "wb") as f:
+                f.write(processed_audio)
+            
+            # 履歴に保存
+            save_conversion_history(st.session_state.user_id, original_filename, unique_filename)
+            
+            st.download_button("Download converted audio", processed_audio, unique_filename, "audio/wav")
+
+# Main application
 def main():
-    create_db()  # アプリケーション起動時にデータベースを作成
+    st.set_page_config(page_title="Voice Changer", layout="wide")
+    
+    if 'page' not in st.session_state:
+        st.session_state.page = 'home'
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
+
+    # Sidebar
+    st.sidebar.title("Voice Changer")
+    if st.session_state.logged_in:
+        if st.sidebar.button('Logout'):
+            st.session_state.logged_in = False
+            st.session_state.page = 'home'
+        view = st.sidebar.radio("Navigation", ["Main", "History"])
+        st.session_state.page = view.lower()
+
+    # Main content
     if st.session_state.page == 'home':
-        home()
-    elif st.session_state.page == 'create_account':
-        create_account()
+        home_view()
     elif st.session_state.page == 'login':
-        login()
-    elif st.session_state.page == 'main' and st.session_state.logged_in:
-        main_screen()
+        login_view()
+    elif st.session_state.page == 'create_account':
+        create_account_view()
+    elif st.session_state.logged_in:
+        if st.session_state.page == 'main':
+            main_view()
+        elif st.session_state.page == 'history':
+            from conversion_history import history_display
+            history_display()
     else:
         st.session_state.page = 'home'
-        st.experimental_rerun()
 
 if __name__ == '__main__':
     main()
