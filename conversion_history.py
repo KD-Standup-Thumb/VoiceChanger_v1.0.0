@@ -1,7 +1,7 @@
 
 import streamlit as st
 import os
-from app import Session, User, ConversionHistory
+from web import Session, User, ConversionHistory
 
 def history_display():
     st.title('Conversion History')
@@ -18,7 +18,10 @@ def history_display():
             st.error("User not found.")
             return
 
-        conversions = session.query(ConversionHistory).filter_by(user_id=user_id).order_by(ConversionHistory.conversion_date.desc()).all()
+        conversions = session.query(ConversionHistory)\
+            .filter_by(user_id=user_id)\
+            .order_by(ConversionHistory.conversion_date.desc())\
+            .all()
 
         if not conversions:
             st.info("No conversion history found.")
@@ -39,24 +42,25 @@ def history_display():
         
         # ファイル選択のためのセレクトボックスを作成（変換後のファイル名を使用）
         file_options = [conv.converted_filename for conv in conversions]
-        selected_file = st.selectbox("Select a converted file to download:", file_options)
+        file = st.selectbox("Select a converted file to download:", file_options)
 
         if st.button("Download Selected File"):
-            selected_conversion = next(conv for conv in conversions if conv.converted_filename == selected_file)
+            selected_conversion = next(
+                conv for conv in conversions if conv.converted_filename == file)
             try:
                 file_path = os.path.join('audio', selected_conversion.converted_filename)
-                if os.path.exists(file_path):
-                    with open(file_path, "rb") as file:
-                        file_content = file.read()
-                        st.download_button(
-                            label=f"Download {selected_conversion.original_filename}",
-                            data=file_content,
-                            file_name=selected_conversion.converted_filename,
-                            mime="audio/wav",
-                            key="download_file"
-                        )
-                else:
+                if not os.path.exists(file_path):
                     st.error(f"File not found: {selected_conversion.converted_filename}")
+                    return
+                with open(file_path, "rb") as file:
+                    file_content = file.read()
+                    st.download_button(
+                        label=f"Download {selected_conversion.original_filename}",
+                        data=file_content,
+                        file_name=selected_conversion.converted_filename,
+                        mime="audio/wav",
+                        key="download_file"
+                    )
             except Exception as e:
                 st.error(f"Error downloading file: {str(e)}")
 

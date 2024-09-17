@@ -5,6 +5,7 @@ torch
 torchaudio
 setuptools
 numpy
+pydub
 flask
 sqlalchemy
 streamlit
